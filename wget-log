@@ -1,0 +1,10 @@
+--2020-11-08 21:07:30--  http://10.105.242.52:8000/myk/before_20201026/poetry/cvaed/content_from_remote.txt
+正在连接 10.105.242.52:8000... 已连接。
+已发出 HTTP 请求，正在等待回应... 200 OK
+长度：144 [text/plain]
+正在保存至: “content_from_remote.txt”
+
+content_from_remote 100%[===================>]     144  --.-KB/s  用时 0s      
+
+2020-11-08 21:07:35 (11.4 MB/s) - 已保存 “content_from_remote.txt” [144/144])
+
