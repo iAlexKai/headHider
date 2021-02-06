@@ -8,7 +8,6 @@ import json
 import logging
 import torch
 import os, sys
-from beeprint import pp
 
 from configs import Config as Config
 from data_apis.corpus import LoadPoem
@@ -17,10 +16,6 @@ from models.seq2seq import Seq2Seq
 from models.poemwae import PoemWAE
 
 from helper import to_tensor, timeSince  # 将numpy转为tensor
-
-from experiments.metrics import Metrics
-from sample import evaluate
-from tensorboardX import SummaryWriter # install tensorboardX (pip install tensorboardX) before importing this package
 
 
 parentPath = os.path.abspath("..")
@@ -50,7 +45,7 @@ parser.add_argument('--valid_every', type=int, default=50, help='interval to val
 parser.add_argument('--eval_every', type=int, default=1, help='interval to evaluate on the validation set')
 parser.add_argument('--test_every', type=int, default=1, help='interval to test on the titles')
 parser.add_argument('--seed', type=int, default=1111, help='random seed')
-parser.add_argument('--forward_only', default=False, action='store_true', help='only test, no training')
+parser.add_argument('--forward_only', default=True, action='store_true', help='only test, no training')
 
 args = parser.parse_args()
 
@@ -88,43 +83,6 @@ if use_cuda:
     torch.cuda.manual_seed(args.seed)
 
 
-# 从'./output/PoemWAE/sent_pretrain/SentimentPoems/{}/models/model_epo14.pckl' 提取先验分布参数组合成一个高斯混合分布
-# 导入PoemWAE_GMP的先验分布区，作为初始化模型
-def merge_to_mix_model():
-    print("Load parameters from sub Gassian model to initialize the GMP")
-    state_1 = torch.load(f='./output/PoemWAE/sent_pretrain/SentimentPoems/1/models/model_epo14.pckl')
-    state_2 = torch.load(f='./output/PoemWAE/sent_pretrain/SentimentPoems/2/models/model_epo14.pckl')
-    state_3 = torch.load(f='./output/PoemWAE/sent_pretrain/SentimentPoems/3/models/model_epo14.pckl')
-    state_4 = torch.load(f='./output/PoemWAE/sent_pretrain/SentimentPoems/4/models/model_epo14.pckl')
-    state_5 = torch.load(f='./output/PoemWAE/sent_pretrain/SentimentPoems/5/models/model_epo14.pckl')
-
-
-def divide_to_sub_models():
-    pass
-
-
-def save_model(model, epoch, global_iter, batch_idx, sentiment=None):
-    print("Saving model")
-    # for item in model.state_dict():
-    #     print(item)
-    # import pdb
-    # pdb.set_trace()
-    if sentiment is None:
-        torch.save(f='./output/{}/model_iter{}_epoch{}_batch{}.pckl'
-                   .format(args.expname, global_iter, epoch, batch_idx),
-                   obj=model)
-    else:
-        torch.save(f='./output/{}/model_iter{}_sent{}_epoch{}.pckl'
-                   .format(args.model, args.expname, global_iter,
-                           sentiment+1, epoch), obj=model)
-
-
-# def save_sentiment_model(model, epoch, sentiment_id):
-#     print("Saving sentiment model {}".format(sentiment_id))
-#     for item in model.state_dict():
-#         print(item)
-#     torch.save(f='./output/{}/{}/{}/{}/models/model_epo{}.pckl'.format(args.model, args.expname,
-#                                                     args.dataset, sentiment_id, epoch), obj=model)
 
 def load_model(global_iter, epoch):
     print("Load model global iter{}, epoch{}".format(global_iter, epoch))
@@ -168,9 +126,9 @@ def get_user_input(rev_vocab, title_size):
         return False
 
     while True:
-        # title = str(input("请输入你要写的四字藏头诗（必须为四个字的中文）"))
-        empty = True
-        title = None
+        title = str(input("请输入你要写的四字藏头诗（必须为四个字的中文）"))
+        empty = (len(title) == 0)
+        
         while empty:
             try:
                 with open('./content_from_local.txt', 'r') as input_file:
@@ -239,13 +197,15 @@ def main():
     api = LoadPoem(args.train_data_dir, args.test_data_dir, args.max_vocab_size)
 
     # 交替训练，准备大数据集
-    poem_corpus = api.get_poem_corpus()  # corpus for training and validation
+    #poem_corpus = api.get_poem_corpus()  # corpus for training and validation
     test_data = api.get_test_corpus()  # 测试数据
     # 三个list，每个list中的每一个元素都是 [topic, last_sentence, current_sentence]
-    train_poem, valid_poem, test_poem = poem_corpus.get("train"), poem_corpus.get("valid"), test_data.get("test")
+    #train_poem, valid_poem, test_poem = poem_corpus.get("train"), poem_corpus.get("valid"), test_data.get("test")
 
-    train_loader = SWDADataLoader("Train", train_poem, config)
-    valid_loader = SWDADataLoader("Valid", valid_poem, config)
+    test_poem = test_data.get("test")
+    
+    #train_loader = SWDADataLoader("Train", train_poem, config)
+    #valid_loader = SWDADataLoader("Valid", valid_poem, config)
     test_loader = SWDADataLoader("Test", test_poem, config)
 
     print("Finish Poem data loading, not pretraining or alignment test")
@@ -366,7 +326,7 @@ def main():
         for i in range(1):
             # import pdb
             # pdb.set_trace()
-            model = load_model('./output/basic/header_model.pckl')
+            model = load_model('./output/basic/model.pckl')
             model.vocab = api.vocab
             model.rev_vocab = api.rev_vocab
             test_loader.epoch_init(test_config.batch_size, shuffle=False)
@@ -376,9 +336,9 @@ def main():
                 model.eval()  # eval()主要影响BatchNorm, dropout等操作
                 batch = get_user_input(api.rev_vocab, config.title_size)
 
-                # batch = test_loader.next_batch_test()  # test data使用专门的batch
-                # import pdb
-                # pdb.set_trace()
+                #batch = test_loader.next_batch_test()  # test data使用专门的batch
+                #import pdb
+                #pdb.set_trace()
                 if batch is None:
                     break
 
@@ -391,9 +351,14 @@ def main():
                 title_tensor = to_tensor(title_list)
 
                 # test函数将当前batch对应的这首诗decode出来，记住每次decode的输入context是上一次的结果
+                print("before inferencing")
+                import time
+                time_start = time.time()
                 output_poem = model.test(title_tensor=title_tensor, title_words=title_list, headers=headers)
-                with open('./content_from_remote.txt', 'w') as file:
-                    file.write(output_poem)
+                print("finish inferencing, using {:d} seconds".format(int(time.time()-time_start)))
+                
+                #with open('./content_from_remote.txt', 'w') as file:
+                #    file.write(output_poem)
                 print(output_poem)
                 print('\n')
             print("Done testing")
