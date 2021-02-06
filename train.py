@@ -1,4 +1,3 @@
-# 这段文字已经上传到87服务器上
 import argparse
 import time
 from datetime import datetime
@@ -8,6 +7,8 @@ import json
 import logging
 import torch
 import os, sys
+import time
+import torch2trt
 
 from configs import Config as Config
 from data_apis.corpus import LoadPoem
@@ -323,45 +324,63 @@ def main():
         # test_epoch_list = [21, 19, 8]
         test_global_list = [8]
         test_epoch_list = [20]
-        for i in range(1):
-            # import pdb
-            # pdb.set_trace()
-            model = load_model('./output/basic/model.pckl')
-            model.vocab = api.vocab
-            model.rev_vocab = api.rev_vocab
-            test_loader.epoch_init(test_config.batch_size, shuffle=False)
+        if args.model == "Seq2Seq":
+            model = Seq2Seq(config=config, api=api)
+        else:
+            model = PoemWAE(config=config, api=api)
+        if use_cuda:
+            model = model.cuda()
 
-            last_title = None
-            while True:
-                model.eval()  # eval()主要影响BatchNorm, dropout等操作
-                batch = get_user_input(api.rev_vocab, config.title_size)
+        
+            
+        import time
+        time_start = time.time()
+        print("\nbefore loading model\n")
+
+        model.load_state_dict(torch.load(f='./output/{}/model_state_dict.pckl'.format(args.expname)))
+        model = model.cuda()
+        model.eval()        
+        print("finish loading model, using {:d} seconds".format(int(time.time()-time_start)))
+
+        
+        model.vocab = api.vocab
+        model.rev_vocab = api.rev_vocab
+        
+        model = torch2trt.TensorRTModuleWrapper(model, 1, 1 << 30).cuda().eval()
+
+        test_loader.epoch_init(test_config.batch_size, shuffle=False)
+
+        last_title = None
+        while True:
+            model.eval()  # eval()主要影响BatchNorm, dropout等操作
+            batch = get_user_input(api.rev_vocab, config.title_size)
 
                 #batch = test_loader.next_batch_test()  # test data使用专门的batch
                 #import pdb
                 #pdb.set_trace()
-                if batch is None:
-                    break
+            if batch is None:
+                break
 
-                title_list, headers, title = batch  # batch size是1，一个batch写一首诗
+            title_list, headers, title = batch  # batch size是1，一个batch写一首诗
 
-                if title == last_title:
-                    continue
-                last_title = title
+            if title == last_title:
+                continue
+            last_title = title
 
-                title_tensor = to_tensor(title_list)
+            title_tensor = to_tensor(title_list)
 
-                # test函数将当前batch对应的这首诗decode出来，记住每次decode的输入context是上一次的结果
-                print("before inferencing")
-                import time
-                time_start = time.time()
-                output_poem = model.test(title_tensor=title_tensor, title_words=title_list, headers=headers)
-                print("finish inferencing, using {:d} seconds".format(int(time.time()-time_start)))
+            # test函数将当前batch对应的这首诗decode出来，记住每次decode的输入context是上一次的结果
+            print("before inferencing")
+            import time
+            time_start = time.time()
+            output_poem = model.test(title_tensor=title_tensor, title_words=title_list, headers=headers)
+            print("finish inferencing, using {} seconds".format(time.time()-time_start))
                 
                 #with open('./content_from_remote.txt', 'w') as file:
                 #    file.write(output_poem)
-                print(output_poem)
-                print('\n')
-            print("Done testing")
+            print(output_poem)
+            print('\n')
+        print("Done testing")
 
 
 def train_process(model, train_loader, config, sentiment_data=False, mask_type=None):
@@ -567,6 +586,7 @@ def valid_process_sentiment(model, valid_poem_loader, valid_config, global_iter,
 
 
 if __name__ == "__main__":
+    
     main()
 
 
