@@ -118,29 +118,24 @@ def process_pretrain_vec(pretrain_vec, vocab):
     return np.array(pretrain_weight)
 
 
-def get_user_input(rev_vocab, title_size):
-
+def get_user_input(rev_vocab, title_size, last_file_length):
+    import time
     def _is_Chinese(title):
         for ch in title:
             if '\u4e00' <= ch <= '\u9fff':
                 return True
         return False
-
     while True:
-        title = str(input("请输入你要写的四字藏头诗（必须为四个字的中文）"))
-        empty = (len(title) == 0)
-        
-        while empty:
-            try:
-                with open('./content_from_local.txt', 'r') as input_file:
-                    content = input_file.read()
-                    if len(content) != 0:
-                        empty = False
-                        title = content[0:4]
-            except:
-                continue
-
+        cur_file = open('/home/nano/Desktop/workspace_myk/shared_input_zone.txt').read().strip().split('\n')
+        if len(cur_file) == last_file_length:
+            #print("file not changed, keep waiting for another 3 seconds")
+            time.sleep(1)
+            continue
+        last_file_length = len(cur_file)
+        title = cur_file[-1]
+       
         if title is None or title is "" or len(title) != 4 or not _is_Chinese(title):
+            print("The title must be four-word.")
             continue
         else:
             break
@@ -152,7 +147,7 @@ def get_user_input(rev_vocab, title_size):
     for i in range(4):
         headers_batch.append([[title[i]]])
 
-    return np.array(title_batch), headers_batch, title
+    return (np.array(title_batch), headers_batch, title), last_file_length
 
 
 def main():
@@ -351,9 +346,11 @@ def main():
         test_loader.epoch_init(test_config.batch_size, shuffle=False)
 
         last_title = None
+        last_file_length = 0
         while True:
             model.eval()  # eval()主要影响BatchNorm, dropout等操作
-            batch = get_user_input(api.rev_vocab, config.title_size)
+            print("Waiting for vocal input")
+            batch, last_file_length = get_user_input(api.rev_vocab, config.title_size, last_file_length)
 
                 #batch = test_loader.next_batch_test()  # test data使用专门的batch
                 #import pdb
