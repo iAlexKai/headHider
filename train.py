@@ -8,7 +8,7 @@ import logging
 import torch
 import os, sys
 import time
-import torch2trt
+from torch2trt_dynamic import torch2trt_dynamic
 
 from configs import Config as Config
 from data_apis.corpus import LoadPoem
@@ -116,6 +116,21 @@ def process_pretrain_vec(pretrain_vec, vocab):
         else:
             pretrain_weight.append(np.random.randn(embed_dim))
     return np.array(pretrain_weight)
+
+
+def get_one_input_for_tensorrt(rev_vocab, title_size):
+    title = "春暖花开"
+    title = [rev_vocab.get(item, rev_vocab["<unk>"]) for item in title]
+    title_batch = [title + [0] * (title_size - len(title))]
+    headers_batch = []
+    for i in range(4):
+        headers_batch.append(title[i])
+    title_tensor = to_tensor((np.array(title_batch)))
+    # headers_batch = to_tensor((np.array(headers_batch)))
+    # title = to_tensor((np.array(title)))
+
+    # return title_tensor, headers_batch, title
+    return title_tensor
 
 
 def get_user_input(rev_vocab, title_size, last_file_length):
@@ -326,25 +341,26 @@ def main():
         if use_cuda:
             model = model.cuda()
 
-        
-            
         import time
         time_start = time.time()
         print("\nbefore loading model\n")
 
         model.load_state_dict(torch.load(f='./output/{}/model_state_dict.pckl'.format(args.expname)))
         model = model.cuda()
-        model.eval()        
         print("finish loading model, using {:d} seconds".format(int(time.time()-time_start)))
 
         
         model.vocab = api.vocab
         model.rev_vocab = api.rev_vocab
-        
-        model = torch2trt.TensorRTModuleWrapper(model, 1, 1 << 30).cuda().eval()
 
         test_loader.epoch_init(test_config.batch_size, shuffle=False)
 
+        # 从test_loader里面拿到一个输入，使用tensorrt对模型进行压缩
+        title_tensor = get_one_input_for_tensorrt(api.rev_vocab, config.title_size)
+
+        # epsilon = to_tensor(torch.randn([config.batch_size, config.z_size]))
+        # model = torch2trt_dynamic(model, [title_tensor, epsilon], max_workspace_size=100)
+        model = torch2trt_dynamic(model, [title_tensor], max_workspace_size=100)
         last_title = None
         last_file_length = 0
         while True:
@@ -370,7 +386,7 @@ def main():
             print("before inferencing")
             import time
             time_start = time.time()
-            output_poem = model.test(title_tensor=title_tensor, title_words=title_list, headers=headers)
+            output_poem = model(title_tensor)
             print("finish inferencing, using {} seconds".format(time.time()-time_start))
                 
                 #with open('./content_from_remote.txt', 'w') as file:

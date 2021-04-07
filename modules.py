@@ -104,7 +104,17 @@ class Encoder(nn.Module):
         # h_n (1, 2, batch, n_hidden) 按层排列
         h_n = h_n.view(self.n_layers, (1 + self.bidirectional), batch_size, self.hidden_size)
         # 取最后一层 (2, batch, n_hidden)
-        h_n = h_n[-1]  # 取last hidden的最后一层作为encoder的last hidden并返回
+        # if type(h_n) == int:
+        # import pdb
+        # pdb.set_trace()
+        try:
+            h_n = h_n[-1]  # 取last hidden的最后一层作为encoder的last hidden并返回
+        except Exception:
+            # import pdb
+            # pdb.set_trace()
+            import time
+            time.sleep(0.5)
+            
         # (batch_size, 1 * 2 * hidden_size) 后面全给弄到一起
         enc = h_n.transpose(1,0).contiguous().view(batch_size, -1)
 
@@ -198,15 +208,15 @@ class Variation(nn.Module):
             # nn.init.kaiming_uniform_(m.weight.data)
             m.bias.data.fill_(0)
 
+    # def forward(self, context, epsilon):
     def forward(self, context):
         batch_size, _ = context.size()  # prior: (batch, 4 * hidden)
         context = self.fc(context)
         mu = self.context_to_mu(context)
         logsigma = self.context_to_logsigma(context) 
         std = torch.exp(0.5 * logsigma)
-        
         epsilon = to_tensor(torch.randn([batch_size, self.z_size]))
-        z = epsilon * std + mu  
+        z = epsilon * std + mu
         return z, mu, logsigma 
     
 
@@ -398,19 +408,31 @@ class Decoder(nn.Module):
 
     # init_hidden: (batch, z_size + 4*hidden) --unsqueeze->  (1, batch, z_size+4*hidden)
     # self.decoder(torch.cat((z, c), 1), None, target[:, :-1], target_lens-1)
-    def forward(self, init_hidden, context=None, inputs=None, lens=None):
-        batch_size, maxlen = inputs.size()
-        inputs = self.embedding(inputs)
+    def forward(self, init_hidden, maxlen, go_id):
+        # batch_size = init_hidden.size(0)
+        # decoder_input = to_tensor(torch.LongTensor([[go_id]]).view(1, 1))  # (batch, 1)
+        # inputs = self.embedding(inputs)
+        #
+        # if context is not None:
+        #     repeated_context = context.unsqueeze(1).repeat(1, maxlen, 1)
+        #     inputs = torch.cat([inputs, repeated_context], 2)
+        #
+        # # inputs = F.dropout(inputs, 0.5, self.training)
+        #
+        # hids, h_n = self.rnn(inputs, init_hidden.unsqueeze(0))
+        # decoded = self.out(hids.contiguous().view(-1, self.hidden_size))  # reshape before linear over vocab
+        # decoded = decoded.view(batch_size, maxlen, self.vocab_size)
+        # return decoded
 
-        if context is not None:
-            repeated_context = context.unsqueeze(1).repeat(1, maxlen, 1)
-            inputs = torch.cat([inputs, repeated_context], 2)
+        batch_size = init_hidden.size(0)
+        decoder_input = to_tensor(torch.LongTensor([[go_id]]).view(1, 1))  # (batch, 1)
+        decoder_input = self.embedding(decoder_input)  # (batch, 1, emb_dim)
 
-        # inputs = F.dropout(inputs, 0.5, self.training)
+        decoder_hidden = init_hidden.unsqueeze(0)  # (1, batch, 4*hidden+z_size)
 
-        hids, h_n = self.rnn(inputs, init_hidden.unsqueeze(0))
-        decoded = self.out(hids.contiguous().view(-1, self.hidden_size))  # reshape before linear over vocab
-        decoded = decoded.view(batch_size, maxlen, self.vocab_size)
+        decoder_output, decoder_hidden = self.rnn(decoder_input, decoder_hidden)  # (1, 1, hidden)
+        decoder_output = self.out(decoder_output.contiguous().view(-1, self.hidden_size))  # (1, vocab_size)
+        decoded = decoder_output.view(batch_size, 1, self.vocab_size)
         return decoded
 
     # 生成结果，可以直接当做test的输出，也可以做evaluate的metric值（如BLEU）计算
@@ -456,11 +478,14 @@ class Decoder(nn.Module):
     # init_hidden (prior_z和c的cat)
     # max_len： config.maxlen 即10
     # SOS_tok: 即<s>对应的token
-    def testing(self, init_hidden, maxlen, go_id, header, mode="greedy"):
+    def testing(self, init_hidden, maxlen, go_id, mode="greedy"):
         batch_size = init_hidden.size(0)
         assert batch_size == 1
+
         decoder_input = to_tensor(torch.LongTensor([[go_id]]).view(1, 1))  # (batch, 1)
-        header_input = to_tensor(torch.LongTensor(header).view(1, 1))
+        # import pdb
+        # pdb.set_trace()
+
         # input: (batch=1, len=1, emb_size)
         decoder_input = self.embedding(decoder_input)  # (batch, 1, emb_dim)
         # hidden: (batch=1, 2, hidden_size * 2)
@@ -482,12 +507,12 @@ class Decoder(nn.Module):
             ni = topi.squeeze().cpu().numpy()
 
             # 为下一次decode准备输入字
-            if di != 0:
-                decoder_input = self.embedding(topi)
-                pred_outs[:, di] = ni
-            # 将藏头字直接当做第一个位置
-            else:
-                decoder_input = self.embedding(header_input)
-                pred_outs[:, di] = header[0][0]
+            # if di != 0:
+            decoder_input = self.embedding(topi)
+            pred_outs[:, di] = ni
+            # # 将藏头字直接当做第一个位置
+            # else:
+            #     decoder_input = self.embedding(header_input)
+            #     pred_outs[:, di] = header.item()
         # 结束for完成一句诗的token预测
         return pred_outs
