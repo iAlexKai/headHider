@@ -330,10 +330,6 @@ def main():
 
     # forward_only 测试
     else:
-        # test_global_list = [4, 4, 2]
-        # test_epoch_list = [21, 19, 8]
-        test_global_list = [8]
-        test_epoch_list = [20]
         if args.model == "Seq2Seq":
             model = Seq2Seq(config=config, api=api)
         else:
@@ -360,6 +356,8 @@ def main():
 
         # epsilon = to_tensor(torch.randn([config.batch_size, config.z_size]))
         # model = torch2trt_dynamic(model, [title_tensor, epsilon], max_workspace_size=100)
+
+        # epsilon = torch.randn([config.batch_size, config.z_size]).cuda()
         model = torch2trt_dynamic(model, [title_tensor], max_workspace_size=100)
         last_title = None
         last_file_length = 0

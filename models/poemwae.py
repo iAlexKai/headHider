@@ -141,6 +141,7 @@ class PoemWAE(nn.Module):
     # def forward(self, title, epsilon):
     def forward(self, title):
         self.eval()
+        # title, epsilon = inputs
         # import pdb
         # pdb.set_trace()
         # (batch, 2 * hidden_size)

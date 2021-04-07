@@ -215,7 +215,10 @@ class Variation(nn.Module):
         mu = self.context_to_mu(context)
         logsigma = self.context_to_logsigma(context) 
         std = torch.exp(0.5 * logsigma)
-        epsilon = to_tensor(torch.randn([batch_size, self.z_size]))
+
+        # epsilon = to_tensor(torch.randn([batch_size, self.z_size]))
+
+        epsilon = to_tensor(torch.ones([batch_size, self.z_size]))
         z = epsilon * std + mu
         return z, mu, logsigma 
     
