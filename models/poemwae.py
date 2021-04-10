@@ -35,8 +35,6 @@ class PoemWAE(nn.Module):
         self.init_w = config.init_weight
 
         self.embedder = nn.Embedding(self.vocab_size, config.emb_size, padding_idx=PAD_token)
-        if pretrain_weight is not None:
-            self.embedder.weight.data.copy_(torch.from_numpy(pretrain_weight))
         # 用同一个seq_encoder来编码标题和前后两句话
         self.seq_encoder = Encoder(self.embedder, config.emb_size, config.n_hidden,
                                      True, config.n_layers, config.noise_radius)
@@ -59,7 +57,6 @@ class PoemWAE(nn.Module):
             nn.ReLU(),
             nn.Linear(config.z_size, config.z_size)
         )
-        self.post_generator.apply(self.init_weights)
 
         self.prior_generator = nn.Sequential(
             nn.Linear(config.z_size, config.z_size),
@@ -70,7 +67,6 @@ class PoemWAE(nn.Module):
             nn.ReLU(),
             nn.Linear(config.z_size, config.z_size)
         )
-        self.prior_generator.apply(self.init_weights)
 
         self.init_decoder_hidden = nn.Sequential(
             nn.Linear(config.n_hidden * 4 + config.z_size, config.n_hidden * 4),
@@ -93,32 +89,6 @@ class PoemWAE(nn.Module):
             nn.LeakyReLU(0.2),
             nn.Linear(config.n_hidden * 2, 1),
         )
-        self.discriminator.apply(self.init_weights)
-
-        # optimizer 定义，分别对应三个模块的训练，注意！三个模块的optimizer不相同
-        # self.optimizer_AE = optim.SGD(list(self.seq_encoder.parameters())
-        self.optimizer_AE = optim.SGD(list(self.seq_encoder.parameters())
-                                      + list(self.post_net.parameters())
-                                      + list(self.post_generator.parameters())
-                                      + list(self.init_decoder_hidden.parameters())
-                                      + list(self.decoder.parameters()), lr=config.lr_ae)
-        self.optimizer_G = optim.RMSprop(list(self.post_net.parameters())
-                                         + list(self.post_generator.parameters())
-                                         + list(self.prior_net.parameters())
-                                         + list(self.prior_generator.parameters()),
-                                         lr=self.lr_gan_g)
-        self.optimizer_D = optim.RMSprop(self.discriminator.parameters(), lr=self.lr_gan_d)
-
-        self.lr_scheduler_AE = optim.lr_scheduler.StepLR(self.optimizer_AE, step_size=10, gamma=0.8)
-
-        self.criterion_ce = nn.CrossEntropyLoss()
-
-    def init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            m.weight.data.uniform_(-self.init_w, self.init_w)
-            # nn.init.kaiming_normal_(m.weight.data)
-            # nn.init.kaiming_uniform_(m.weight.data)
-            m.bias.data.fill_(0)
 
     # x: (batch, 2*n_hidden)
     # c: (batch, 2*2*n_hidden)
@@ -131,37 +101,45 @@ class PoemWAE(nn.Module):
         choice_statistic = self.prior_net(c, align)  # e: (batch, z_size)
         return choice_statistic
 
-    def sample_code_prior(self, c):
-        z, _, _ = self.prior_net(c)  # e: (batch, z_size)
+    def sample_code_prior(self, cond):
+        z, _, _ = self.prior_net(cond)  # e: (batch, z_size)
         z = self.prior_generator(z)  # z: (batch, z_size)
         return z
 
     # 输入 title, context, target, target_lens.
     # c由title和context encode之后的hidden相concat而成
     # def forward(self, title, epsilon):
-    def forward(self, title):
+
+    def forward(self, title, decoder_input):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
+    # def forward(self, title):
         self.eval()
-        # title, epsilon = inputs
-        # import pdb
-        # pdb.set_trace()
-        # (batch, 2 * hidden_size)
-        title_last_hidden, _ = self.seq_encoder(title)
-        context_last_hidden, _ = self.seq_encoder(title)
+        title_last_hidden = self.seq_encoder(title)
+        # return title_last_hidden
 
-        # context_embedding
-        c = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 2 * hidden_size * 2)
-        # z = self.sample_code_post(x, c)  # (batch, z_size)
-        # z = self.sample_code_prior(c, epsilon)
-        z = self.sample_code_prior(c)
+        context_last_hidden = self.seq_encoder(decoder_input)
 
-        # 标准的autoencoder的decode，decoder初态为x, c的cat，将target错位输入
-        # output: (batch, len, vocab_size) len是9，即7+标点+</s>
+        cond = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 2 * hidden_size * 2)
 
-        output = self.decoder(self.init_decoder_hidden(torch.cat((z, c), 1)), maxlen=self.maxlen, go_id=self.go_id)
+        # z, _, _ = self.prior_net(cond, epsilon)  # e: (batch, z_size)
+        z, _, _ = self.prior_net(cond)  # e: (batch, z_size)
+
+        z = self.prior_generator(z)  # z: (batch, z_size)
+
+        input_to_init_decoder_hidden = torch.cat((z, cond), 1)
+
+        decoder_init = self.init_decoder_hidden(input_to_init_decoder_hidden)
+        return decoder_init
+        
+        output = self.decoder(init_hidden=decoder_init, maxlen=self.maxlen, decoder_input=decoder_input)
+
+        return output
 
         flattened_output = output.view(-1, self.vocab_size)
 
         return flattened_output
+
+
+
 
         # dec_target = target[:, 1:].contiguous().view(-1)
         # mask = dec_target.gt(0)  # 即判断target的token中是否有0（pad项）
@@ -188,54 +166,60 @@ class PoemWAE(nn.Module):
     # def test(self, title_tensor, title_words, headers):
 
     # 为了让torch2trt找到入口，需将test改名为forward
-    def test(self, title_tensor):
-        self.seq_encoder.eval()
-        self.discriminator.eval()
-        self.decoder.eval()
+    def forward_test(self, title_tensor):
+        self.eval()
         # tem初始化为[2,3,0,0,0,0,0,0,0]
 
         tem = [[2, 3] + [0] * (self.maxlen - 2)]
         pred_poems = []
         # title_tokens = [self.vocab[e.item()] for e in title_words if e not in [0, self.eos_id, self.go_id]]
         # pred_poems.append(title_tokens)
-        for sent_id in range(4):
-            tem = to_tensor(np.array(tem))
-            context = tem
+        # for sent_id in range(4):
 
-            # vec_context = np.zeros((batch_size, self.maxlen), dtype=np.int64)
-            # for b_id in range(batch_size):
-            #     vec_context[b_id, :] = np.array(context[b_id])
-            # context = to_tensor(vec_context)
 
-            title_last_hidden, _ = self.seq_encoder(title_tensor)  # （batch=1, 2*hidden）
-            if sent_id == 0:
-                context_last_hidden, _ = self.seq_encoder(title_tensor)  # (batch=1, 2*hidden)
-            else:
-                context_last_hidden, _ = self.seq_encoder(context)  # (batch=1, 2*hidden)
-            c = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 4*hidden_size)
-            # 由于一次只有一首诗，batch_size = 1，因此不必repeat
-            prior_z = self.sample_code_prior(c)
+        tem = to_tensor(np.array(tem))
+        # context = tem
 
-            # decode_words 是完整的一句诗
-            decode_words = self.decoder.testing(init_hidden=self.init_decoder_hidden(torch.cat((prior_z, c), 1)),
-                                             maxlen=self.maxlen, go_id=self.go_id,
-                                             mode="greedy")
+        # vec_context = np.zeros((batch_size, self.maxlen), dtype=np.int64)
+        # for b_id in range(batch_size):
+        #     vec_context[b_id, :] = np.array(context[b_id])
+        # context = to_tensor(vec_context)
 
-            decode_words = decode_words[0].tolist()
-            # import pdb
-            # pdb.set_trace()
-            if len(decode_words) > self.maxlen:
-                tem = [decode_words[0: self.maxlen]]
-            else:
-                tem = [[0] * (self.maxlen - len(decode_words)) + decode_words]
+        title_last_hidden, _ = self.seq_encoder(title_tensor)  # （batch=1, 2*hidden）
+        context_last_hidden, _ = self.seq_encoder(title_tensor)  # (batch=1, 2*hidden)
+        c = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 4*hidden_size)
+        # 由于一次只有一首诗，batch_size = 1，因此不必repeat
+        prior_z = self.sample_code_prior(c)
 
-            pred_tokens = [self.vocab[e] for e in decode_words[:-1] if e != self.eos_id and e != 0]
-            pred_poems.append(pred_tokens)
+        output = self.decoder(self.init_decoder_hidden(torch.cat((prior_z, c), 1)), maxlen=self.maxlen, go_id=self.go_id)
+        flattened_output = output.view(-1, self.vocab_size)
 
-        gen = ''
-        for line in pred_poems:
-            true_str = " ".join(line)
-            gen = gen + true_str + '\n'
+        # decode_words 是完整的一句诗
+        pred_out = self.decoder.testing(init_hidden=self.init_decoder_hidden(torch.cat((prior_z, c), 1)),
+                                         maxlen=self.maxlen, go_id=self.go_id,
+                                         mode="greedy")
 
-        return gen
+
+        print(pred_out)
+
+        # decode_words = decode_words[0].tolist()
+        # # import pdb
+        # # pdb.set_trace()
+        # if len(decode_words) > self.maxlen:
+        #     tem = [decode_words[0: self.maxlen]]
+        # else:
+        #     tem = [[0] * (self.maxlen - len(decode_words)) + decode_words]
+        #
+        # pred_tokens = [self.vocab[e] for e in decode_words[:-1] if e != self.eos_id and e != 0]
+        # pred_poems.append(pred_tokens)
+        #
+        # gen = ''
+        # for line in pred_poems:
+        #     true_str = " ".join(line)
+        #     gen = gen + true_str + '\n'
+        #
+        # print(gen)
+
+        return flattened_output
+        # return gen
 
