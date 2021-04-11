@@ -5,75 +5,16 @@ import numpy as np
 import random
 import json
 import torch
+import pickle
 import os, sys
 import time
 from torch2trt_dynamic import torch2trt_dynamic
 
 from configs import Config as Config
-from data_apis.corpus import LoadPoem
 from models.poemwae import PoemWAE
 
 from helper import to_tensor, timeSince  # 将numpy转为tensor
-#
-#
-# parentPath = os.path.abspath("..")
-# sys.path.insert(0, parentPath)# add parent folder to path so as to import common modules
-#
-# parser = argparse.ArgumentParser(description='headHider Pytorch')
-#
-# # 大古诗数据集
-# parser.add_argument('--train_data_dir', type=str, default='./data/train_data.txt',
-#                     help='addr of data corpus for train and valid')
-#
-# parser.add_argument('--test_data_dir', type=str, default='./data/test_data.txt',
-#                     help='addr of data for testing, i.e. test titles')
-#
-# parser.add_argument('--max_vocab_size', type=int, default=10000, help='The size of the vocab, Cannot be None')
-# parser.add_argument('--expname', type=str, default='basic',
-#                     help='experiment name, for disinguishing different parameter settings')
-# parser.add_argument('--model', type=str, default='WAE', help='name of the model')
-# parser.add_argument('--visual', action='store_true', default=False, help='visualize training status in tensorboard')
-# parser.add_argument('--reload_from', type=int, default=-1, help='reload from a trained ephoch')
-# parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID')
-#
-# # Evaluation Arguments
-# parser.add_argument('--sample', action='store_true', help='sample when decoding for generation')
-# parser.add_argument('--log_every', type=int, default=50, help='interval to log training results')
-# parser.add_argument('--valid_every', type=int, default=50, help='interval to validation')
-# parser.add_argument('--eval_every', type=int, default=1, help='interval to evaluate on the validation set')
-# parser.add_argument('--test_every', type=int, default=1, help='interval to test on the titles')
-# parser.add_argument('--seed', type=int, default=1111, help='random seed')
-# parser.add_argument('--forward_only', default=True, action='store_true', help='only test, no training')
-#
-# args = parser.parse_args()
 
-# pretrain is True and test_align is False: 用五个小数据集训练从混合高斯分离出来的五个高斯分布，包含test
-# pretrain is False and test_align is True: 测试大数据集训练出来的混合高斯中情感的align情况
-# pretrain is False and test_align is False: 用大数据集训练5个高斯混合出来的模型
-
-# if args.merge:
-#     assert args.pretrain is False and args.test_align is False
-# if args.divide:
-#     assert args.pretrain is True and args.test_align is False
-
-# if args.pretrain:
-#     assert args.sentiment_path == '../final_data/poem_with_sentiment.txt'
-#     assert args.test_align is False
-#     assert args.dataset == 'SentimentPoems'
-
-# if args.test_align:
-#     assert args.dataset == 'TSPoems'
-#     assert args.sentiment_path == '../final_data/poem_with_sentiment.txt'
-
-
-
-
-# make output directory if it doesn't already exist
-
-# Set the random seed manually for reproducibility.
-# random.seed(args.seed)
-# np.random.seed(args.seed)
-# torch.manual_seed(args.seed)
 
 def get_one_input_for_tensorrt(rev_vocab, title_size):
     title = "春暖花开"
@@ -127,10 +68,12 @@ def get_user_input(rev_vocab, title_size, last_file_length):
 def main():
     # config for training
     config = Config()
+    vocab_file = open('pickle_file/vocab.pickle', 'rb')
+    rev_vocab_file = open('pickle_file/rev_vocab.pickle', 'rb')
+    vocab = pickle.load(vocab_file)
+    rev_vocab = pickle.load(rev_vocab_file)
 
-    api = LoadPoem('./data/train_data.txt', './data/test_data.txt', 10000)
-
-    model = PoemWAE(config=config, api=api)
+    model = PoemWAE(config=config, vocab=vocab, rev_vocab=rev_vocab)
 
     import time
     time_start = time.time()
@@ -140,28 +83,25 @@ def main():
     model = model.cuda()
     print("finish loading model, using {:d} seconds".format(int(time.time()-time_start)))
 
-    model.vocab = api.vocab
-    model.rev_vocab = api.rev_vocab
+    model.vocab = vocab
+    model.rev_vocab = rev_vocab
 
     # 从test_loader里面拿到一个输入，使用tensorrt对模型进行压缩
-    title_tensor = get_one_input_for_tensorrt(api.rev_vocab, config.title_size)
+    title_tensor = get_one_input_for_tensorrt(rev_vocab, config.title_size)
 
     # model = torch2trt_dynamic(model, [title_tensor], max_workspace_size=1 << 28)
 
-    decoder_input = to_tensor(torch.IntTensor([[api.rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
-    decoder_input = title_tensor
-    model = torch2trt_dynamic(model, [title_tensor, decoder_input], max_workspace_size=1 << 28)
-
+    decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
+    # decoder_input = title_tensor
+    model = torch2trt_dynamic(model, [title_tensor, decoder_input], max_workspace_size=1 << 28, fp16_mode=True)  # max_workspace_size 最大不能超过30
+    print("Finish model_trt build")
     last_title = None
     last_file_length = 0
     while True:
         model.eval()  # eval()主要影响BatchNorm, dropout等操作
         print("Waiting for vocal input")
-        batch, last_file_length = get_user_input(api.rev_vocab, config.title_size, last_file_length)
+        batch, last_file_length = get_user_input(rev_vocab, config.title_size, last_file_length)
 
-            #batch = test_loader.next_batch_test()  # test data使用专门的batch
-            #import pdb
-            #pdb.set_trace()
         if batch is None:
             break
 
@@ -182,8 +122,8 @@ def main():
 
         # epsilon = torch.randn([1, config.z_size]).cuda()
         # output_poem = model([title_tensor, epsilon])
-        decoder_input = to_tensor(torch.IntTensor([[api.rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
-        decoder_input = title_tensor
+        decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
+        # decoder_input = title_tensor
         output_poem = model(title_tensor, decoder_input)
 
         # output_poem = model([title_tensor])

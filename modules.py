@@ -129,9 +129,6 @@ class Variation(nn.Module):
         return z, mu, logsigma
     
 
-
-
-    
 class Decoder(nn.Module):
     # Decoder(self.embedder, config.emb_size, config.n_hidden*4 + config.z_size, self.vocab_size, n_layers=1)
     def __init__(self, embedder, input_size, hidden_size, vocab_size, n_layers=1):
@@ -139,7 +136,7 @@ class Decoder(nn.Module):
         self.n_layers = n_layers
         self.input_size= input_size 
         self.hidden_size = hidden_size 
-        self.vocab_size = vocab_size 
+        self.vocab_size = vocab_size
 
         self.embedding = embedder
         # 给decoder的init_hidden加一层非线性变换relu
@@ -149,7 +146,7 @@ class Decoder(nn.Module):
 
     # init_hidden: (batch, z_size + 4*hidden) --unsqueeze->  (1, batch, z_size+4*hidden)
     # self.decoder(torch.cat((z, c), 1), None, target[:, :-1], target_lens-1)
-    def forward(self, init_hidden, maxlen, decoder_input):
+    def forward(self, init_hidden, decoder_input):   # 所有的Tensor必须用到，同时converter转换正确
         # batch_size = init_hidden.size(0)
         # decoder_input = to_tensor(torch.LongTensor([[go_id]]).view(1, 1))  # (batch, 1)
         # inputs = self.embedding(inputs)
@@ -172,17 +169,29 @@ class Decoder(nn.Module):
         # Tensorrt only support int32.
         ##################################################################
         # decoder_input = to_tensor(torch.LongTensor([[go_id]]).view(1, 1))  # (batch, 1)
-        # import pdb
-        # pdb.set_trace()
-        decoder_input = self.embedding(decoder_input)  # (batch, 1, emb_dim)
-        return decoder_input
-        decoder_hidden = init_hidden.unsqueeze(0)  # (1, batch, 4*hidden+z_size)
+        # batch_size = decoder_input.shape[0]
 
+        decoder_input = self.embedding(decoder_input)  # (batch, 1, emb_dim)
+        decoder_hidden = init_hidden.view(1, 1, 1600)  # (1, batch, 4*hidden+z_size)
+                                                       # 这里，不能写成 (1, 1, -1) view的converter里面-1没有处理好
+
+        # pred_outs = torch.ones([10]).cuda()
+
+        # for di in range(10):
         decoder_output, decoder_hidden = self.rnn(decoder_input, decoder_hidden)  # (1, 1, hidden)
 
-        decoder_output = self.out(decoder_output.contiguous().view(-1, self.hidden_size))  # (1, vocab_size)
-        decoded = decoder_output.view(batch_size, 1, self.vocab_size)
-        return decoded
+        decoder_output = self.out(decoder_output.contiguous().view(1, self.hidden_size))  # (1, vocab_size)
+        topi = decoder_output.max(dim=1, keepdim=True)[1]
+        return topi
+        # import pdb
+        # pdb.set_trace()
+        pred_outs[di] = topi[0][0]
+        decoder_input = self.embedding(topi)
+
+        # import pdb
+        # pdb.set_trace()
+        return pred_outs
+
 
     # 生成结果，可以直接当做test的输出，也可以做evaluate的metric值（如BLEU）计算
     # init_hidden是prior_z cat c

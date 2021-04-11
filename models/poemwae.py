@@ -18,11 +18,11 @@ minus_one = one * -1
 
 
 class PoemWAE(nn.Module):
-    def __init__(self, config, api, PAD_token=0, pretrain_weight=None):
+    def __init__(self, config, vocab, rev_vocab, PAD_token=0):
         super(PoemWAE, self).__init__()
-        self.vocab = api.vocab
+        self.vocab = vocab
         self.vocab_size = len(self.vocab)
-        self.rev_vocab = api.rev_vocab
+        self.rev_vocab = rev_vocab
         self.go_id = self.rev_vocab["<s>"]
         self.eos_id = self.rev_vocab["</s>"]
         self.maxlen = config.maxlen
@@ -116,7 +116,7 @@ class PoemWAE(nn.Module):
         title_last_hidden = self.seq_encoder(title)
         # return title_last_hidden
 
-        context_last_hidden = self.seq_encoder(decoder_input)
+        context_last_hidden = self.seq_encoder(title)
 
         cond = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 2 * hidden_size * 2)
 
@@ -128,17 +128,13 @@ class PoemWAE(nn.Module):
         input_to_init_decoder_hidden = torch.cat((z, cond), 1)
 
         decoder_init = self.init_decoder_hidden(input_to_init_decoder_hidden)
-        return decoder_init
-        
-        output = self.decoder(init_hidden=decoder_init, maxlen=self.maxlen, decoder_input=decoder_input)
+        # return decoder_init
+
+        # import pdb
+        # pdb.set_trace()
+        output = self.decoder(decoder_init, decoder_input)
 
         return output
-
-        flattened_output = output.view(-1, self.vocab_size)
-
-        return flattened_output
-
-
 
 
         # dec_target = target[:, 1:].contiguous().view(-1)
