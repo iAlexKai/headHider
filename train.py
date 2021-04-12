@@ -25,7 +25,7 @@ def get_one_input_for_tensorrt(rev_vocab, title_size):
 
 
 def transfer_words_to_context_tensor(word_list, rev_vocab, context_size):
-    context = "".join(word_list[:9])
+    context = "".join(word_list)
     context = [rev_vocab.get(item, rev_vocab["<unk>"]) for item in context]
     context_batch = [context + [0] * (context_size - len(context))]
     context_tensor = to_tensor((np.array(context_batch, dtype=np.int32)))
@@ -91,14 +91,14 @@ def main():
     context_tensor = title_tensor
     decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
     init_state_input = torch.zeros([1, 1, 1600]).cuda()
-    # epsilon = torch.randn([1, config.z_size]).cuda()
-
-    # model = torch2trt_dynamic(model, [title_tensor, epsilon, decoder_input, decoder_init], max_workspace_size=1 << 28)  # max_workspace_size 最大不能超过30
-
     use_input_state = torch.ones([1, 1, 1600]).cuda()
+
+    # epsilon = torch.randn([1, config.z_size]).cuda()
     model = torch2trt_dynamic(model, [title_tensor, context_tensor, decoder_input, use_input_state, init_state_input],
                               max_workspace_size=1 << 28)  # max_workspace_size 最大不能超过30
     print("Finish model_trt build")
+    # exit(0)
+
     last_title = None
     last_file_length = 0
     while True:
@@ -129,6 +129,7 @@ def main():
 
             for i in range(10):
                 if i == 0:
+                    # print('First word')
                     use_input_state = torch.ones([1, 1, 1600]).cuda()
                 else:
                     use_input_state = torch.zeros([1, 1, 1600]).cuda()
@@ -144,8 +145,10 @@ def main():
                 init_state_input = decoder_hidden
 
             cur_poem += ("".join(word_list) + "\n")
-            word_list = []
+            # import pdb
+            # pdb.set_trace()
             context_tensor = transfer_words_to_context_tensor(word_list, rev_vocab, config.title_size)
+            word_list = []
             decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
             init_state_input = torch.zeros([1, 1, 1600]).cuda()
 

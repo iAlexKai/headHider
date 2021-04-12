@@ -117,12 +117,18 @@ class Variation(nn.Module):
 
         std = torch.exp(0.5 * logsigma)
 
+        epsilon = to_tensor(torch.ones([batch_size, self.z_size]))
         # import pdb
         # pdb.set_trace()
-        epsilon = to_tensor(torch.ones([batch_size, self.z_size]))
+        rand = np.random.randn(1, self.z_size)
+        print(rand)
+        for i in range(self.z_size):
+            epsilon[0][i] = rand[0][i]
         # return mu, mu, logsigma
 
-        z = epsilon * std + mu
+        z = epsilon * std
+        z = z + mu
+        print("Done processing the model.")
         return z, mu, logsigma
     
 
@@ -144,35 +150,13 @@ class Decoder(nn.Module):
     # init_hidden: (batch, z_size + 4*hidden) --unsqueeze->  (1, batch, z_size+4*hidden)
     # self.decoder(torch.cat((z, c), 1), None, target[:, :-1], target_lens-1)
     def forward(self, decoder_input, init_hidden):   # 所有的Tensor必须用到，同时converter转换正确
-        # batch_size = init_hidden.size(0)
-        # decoder_input = to_tensor(torch.LongTensor([[go_id]]).view(1, 1))  # (batch, 1)
-        # inputs = self.embedding(inputs)
-        #
-        # if context is not None:
-        #     repeated_context = context.unsqueeze(1).repeat(1, maxlen, 1)
-        #     inputs = torch.cat([inputs, repeated_context], 2)
-        #
-        # # inputs = F.dropout(inputs, 0.5, self.training)
-        #
-        # hids, h_n = self.rnn(inputs, init_hidden.unsqueeze(0))
-        # decoded = self.out(hids.contiguous().view(-1, self.hidden_size))  # reshape before linear over vocab
-        # decoded = decoded.view(batch_size, maxlen, self.vocab_size)
-        # return decoded
-
-        # batch_size = init_hidden.size(0)
         ##################################################################
         # Alex
         # torch 1.8.0+ has supported embedding with input type IntTensor
         # Tensorrt only support int32.
         ##################################################################
-        # decoder_input = to_tensor(torch.LongTensor([[go_id]]).view(1, 1))  # (batch, 1)
-        # batch_size = decoder_input.shape[0]
 
         decoder_input = self.embedding(decoder_input)  # (batch, 1, emb_dim)
-
-        # pred_outs = torch.ones([10]).cuda()
-
-        # for di in range(10):
         decoder_output, decoder_hidden = self.rnn(decoder_input, init_hidden)  # (1, 1, hidden)
 
         decoder_output = self.out(decoder_output.contiguous().view(1, self.hidden_size))  # (1, vocab_size)
@@ -188,46 +172,4 @@ class Decoder(nn.Module):
 
         # import pdb
         # pdb.set_trace()
-        return pred_outs
-
-
-    # 生成结果，可以直接当做test的输出，也可以做evaluate的metric值（如BLEU）计算
-    # init_hidden是prior_z cat c
-    # batch_size是1，一次只测试一首诗
-
-    # init_hidden (prior_z和c的cat)
-    # max_len： config.maxlen 即10
-    # SOS_tok: 即<s>对应的token
-    def testing(self, init_hidden, maxlen, go_id, mode="greedy"):
-        batch_size = init_hidden.size(0)
-        assert batch_size == 1
-
-        decoder_input = to_tensor(torch.LongTensor([[go_id]]).view(1, 1))  # (batch, 1)
-        # import pdb
-        # pdb.set_trace()
-
-        # input: (batch=1, len=1, emb_size)
-        decoder_input = self.embedding(decoder_input)  # (batch, 1, emb_dim)
-        # hidden: (batch=1, 2, hidden_size * 2)
-        decoder_hidden = init_hidden.unsqueeze(0)  # (1, batch, 4*hidden+z_size)
-        # pred_outs = np.zeros((batch_size, maxlen), dtype=np.int64)
-        pred_outs = []
-        for di in range(maxlen - 1):  # decode要的是从<s>后一位开始，因此总长度是max_len-1
-            # 输入decoder
-            decoder_output, decoder_hidden = self.rnn(decoder_input, decoder_hidden)  # (1, 1, hidden)
-
-            decoder_output = self.out(decoder_output.contiguous().view(-1, self.hidden_size))  # (1, vocab_size)
-            topi = decoder_output.max(1, keepdim=True)[1]
-            # 拿到pred_outs以返回
-
-            # 为下一次decode准备输入字
-            # if di != 0:
-            decoder_input = self.embedding(topi)
-
-            # ni = topi.squeeze().cpu().numpy()
-            # pred_outs[:, di] = ni
-
-            pred_outs.append(topi)
-            #     pred_outs[:, di] = header.item()
-        # 结束for完成一句诗的token预测
         return pred_outs
