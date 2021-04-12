@@ -111,7 +111,7 @@ class PoemWAE(nn.Module):
     # def forward(self, title, epsilon):
 
     # def forward(self, title, epsilon, decoder_input, decoder_init):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
-    def forward(self, title, decoder_input, use_input_state, init_state_input):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
+    def forward(self, title, context, decoder_input, use_input_state, init_state_input):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
         self.eval()
 
         # Tensorrt 不支持if选择，不支持for，while等循环，需要一个控制变量来实现相同的control flow
@@ -119,7 +119,7 @@ class PoemWAE(nn.Module):
         title_last_hidden = self.seq_encoder(title)
         # return title_last_hidden
 
-        context_last_hidden = self.seq_encoder(title)
+        context_last_hidden = self.seq_encoder(context)
 
         cond = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 2 * hidden_size * 2)
         # import pdb

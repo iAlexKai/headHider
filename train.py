@@ -20,17 +20,16 @@ def get_one_input_for_tensorrt(rev_vocab, title_size):
     title = "春暖花开"
     title = [rev_vocab.get(item, rev_vocab["<unk>"]) for item in title]
     title_batch = [title + [0] * (title_size - len(title))]
-    headers_batch = []
-    for i in range(4):
-        headers_batch.append(title[i])
     title_tensor = to_tensor((np.array(title_batch, dtype=np.int32)))
-    # import pdb
-    # pdb.set_trace()
-    # headers_batch = to_tensor((np.array(headers_batch)))
-    # title = to_tensor((np.array(title)))
-
-    # return title_tensor, headers_batch, title
     return title_tensor
+
+
+def transfer_words_to_context_tensor(word_list, rev_vocab, context_size):
+    context = "".join(word_list[:9])
+    context = [rev_vocab.get(item, rev_vocab["<unk>"]) for item in context]
+    context_batch = [context + [0] * (context_size - len(context))]
+    context_tensor = to_tensor((np.array(context_batch, dtype=np.int32)))
+    return context_tensor
 
 
 def get_user_input(rev_vocab, title_size, last_file_length):
@@ -47,22 +46,23 @@ def get_user_input(rev_vocab, title_size, last_file_length):
             time.sleep(1)
             continue
         last_file_length = len(cur_file)
-        title = cur_file[-1]
+        title_words = cur_file[-1]
        
-        if title is None or title is "" or len(title) != 4 or not _is_Chinese(title):
+        if title_words is None or title_words is "" or len(title_words) != 4 or not _is_Chinese(title_words):
             print("The title must be four-word.")
             continue
         else:
             break
 
-    title = [rev_vocab.get(item, rev_vocab["<unk>"]) for item in title]
+    title = [rev_vocab.get(item, rev_vocab["<unk>"]) for item in title_words]
     title_batch = [title + [0] * (title_size - len(title))]
 
     headers_batch = []
     for i in range(4):
         headers_batch.append([[title[i]]])
 
-    return (np.array(title_batch, dtype=np.int32), headers_batch, title), last_file_length
+    return (np.array(title_batch, dtype=np.int32), headers_batch, title, title_words), last_file_length
+
 
 
 def main():
@@ -73,7 +73,6 @@ def main():
     rev_vocab_file = open('pickle_file/rev_vocab.pickle', 'rb')
     vocab = pickle.load(vocab_file)
     rev_vocab = pickle.load(rev_vocab_file)
-
     model = PoemWAE(config=config, vocab=vocab, rev_vocab=rev_vocab)
 
     import time
@@ -89,6 +88,7 @@ def main():
 
     # 从test_loader里面拿到一个输入，使用tensorrt对模型进行压缩
     title_tensor = get_one_input_for_tensorrt(rev_vocab, config.title_size)
+    context_tensor = title_tensor
     decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
     init_state_input = torch.zeros([1, 1, 1600]).cuda()
     # epsilon = torch.randn([1, config.z_size]).cuda()
@@ -96,7 +96,7 @@ def main():
     # model = torch2trt_dynamic(model, [title_tensor, epsilon, decoder_input, decoder_init], max_workspace_size=1 << 28)  # max_workspace_size 最大不能超过30
 
     use_input_state = torch.ones([1, 1, 1600]).cuda()
-    model = torch2trt_dynamic(model, [title_tensor, decoder_input, use_input_state, init_state_input],
+    model = torch2trt_dynamic(model, [title_tensor, context_tensor, decoder_input, use_input_state, init_state_input],
                               max_workspace_size=1 << 28)  # max_workspace_size 最大不能超过30
     print("Finish model_trt build")
     last_title = None
@@ -108,47 +108,49 @@ def main():
 
         if batch is None:
             break
-
-        title_list, headers, title = batch  # batch size是1，一个batch写一首诗
-
+        title_list, headers, title, title_words = batch  # batch size是1，一个batch写一首诗
         if title == last_title:
             continue
         last_title = title
 
+
         title_tensor = to_tensor(title_list)
-
-        # test函数将当前batch对应的这首诗decode出来，记住每次decode的输入context是上一次的结果
-        # import pdb
-        # pdb.set_trace()
-        print("before inferencing")
-        import time
-        time_start = time.time()
-
+        context_tensor = to_tensor(title_list)
         decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
         init_state_input = torch.zeros([1, 1, 1600]).cuda()
         # epsilon = torch.randn([1, config.z_size]).cuda()
         word_list = []
-        for i in range(10):
-            # import pdb
-            # pdb.set_trace()
-            # topi, decoder_hidden = model(title_tensor, epsilon, decoder_input, decoder_init)
-            if i == 0:
-                use_input_state = torch.ones([1, 1, 1600]).cuda()
-            else:
-                use_input_state = torch.zeros([1, 1, 1600]).cuda()
-            topi, decoder_hidden = model(title_tensor, decoder_input, use_input_state, init_state_input)
-            # import pdb
-            # pdb.set_trace()
-            word_list.append(vocab[topi.item()])
-            print(topi.item())
-            if topi.item() == 3:
-                break
-            decoder_input = topi
-            init_state_input = decoder_hidden
+        print("before inferencing")
+        import time
+        time_start = time.time()
 
+        cur_poem = "{}\n".format(title_words)
+        for _ in range(4):
+
+            for i in range(10):
+                if i == 0:
+                    use_input_state = torch.ones([1, 1, 1600]).cuda()
+                else:
+                    use_input_state = torch.zeros([1, 1, 1600]).cuda()
+                topi, decoder_hidden = model(title_tensor, context_tensor, decoder_input, use_input_state, init_state_input)
+                # import pdb
+                # pdb.set_trace()
+                word_list.append(vocab[topi.item()])
+                # print(topi.item())
+                if topi.item() == 3:
+                    # print("break at {}".format(i))
+                    break
+                decoder_input = topi
+                init_state_input = decoder_hidden
+
+            cur_poem += ("".join(word_list) + "\n")
+            word_list = []
+            context_tensor = transfer_words_to_context_tensor(word_list, rev_vocab, config.title_size)
+            decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
+            init_state_input = torch.zeros([1, 1, 1600]).cuda()
 
         print("finish inferencing, using {} seconds".format(time.time()-time_start))
-        print("".join(word_list))
+        print(cur_poem)
         # print(topi)
         # print(decoder_hidden)
         print('\n')
