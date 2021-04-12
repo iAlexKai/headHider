@@ -111,30 +111,35 @@ class PoemWAE(nn.Module):
     # def forward(self, title, epsilon):
 
     # def forward(self, title, epsilon, decoder_input, decoder_init):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
-    def forward(self, title, decoder_input, decoder_init):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
+    def forward(self, title, decoder_input, use_input_state, init_state_input):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
         self.eval()
+
+        # Tensorrt 不支持if选择，不支持for，while等循环，需要一个控制变量来实现相同的control flow
+
+        title_last_hidden = self.seq_encoder(title)
+        # return title_last_hidden
+
+        context_last_hidden = self.seq_encoder(title)
+
+        cond = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 2 * hidden_size * 2)
         # import pdb
         # pdb.set_trace()
-        if decoder_init[0][0][0] == 0:
-            print('In')  # debug 发现，加速后再次进入函数就只能走if这条路了，不会出if
-            title_last_hidden = self.seq_encoder(title)
-            # return title_last_hidden
+        # z, _, _ = self.prior_net(cond, epsilon)  # e: (batch, z_size)
+        z, _, _ = self.prior_net(cond)  # e: (batch, z_size)
 
-            context_last_hidden = self.seq_encoder(title)
+        z = self.prior_generator(z)  # z: (batch, z_size)
 
-            cond = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 2 * hidden_size * 2)
-            # import pdb
-            # pdb.set_trace()
-            # z, _, _ = self.prior_net(cond, epsilon)  # e: (batch, z_size)
-            z, _, _ = self.prior_net(cond)  # e: (batch, z_size)
+        input_to_init_decoder_hidden = torch.cat((z, cond), 1)
 
-            z = self.prior_generator(z)  # z: (batch, z_size)
-
-            input_to_init_decoder_hidden = torch.cat((z, cond), 1)
-
-            decoder_init = self.init_decoder_hidden(input_to_init_decoder_hidden)
-        print("Out")
-        topi, decoder_hidden = self.decoder(decoder_input, decoder_init)
+        decoder_init = self.init_decoder_hidden(input_to_init_decoder_hidden).view(1, 1, 1600)
+        
+        # When inference the first word, use_input_state=1, init_state_input=0
+        # When inference other words, use_input_state=0, final = init_state_input
+        # import pdb
+        # pdb.set_trace()
+        decoder_init_final = decoder_init * use_input_state + init_state_input
+        
+        topi, decoder_hidden = self.decoder(decoder_input, decoder_init_final)
         # import pdb
         # pdb.set_trace()
         return topi, decoder_hidden

@@ -8,8 +8,6 @@ import torch
 import pickle
 import os, sys
 import time
-import pdb
-pdb.set_trace()
 from torch2trt_dynamic import torch2trt_dynamic
 
 from configs import Config as Config
@@ -92,11 +90,13 @@ def main():
     # 从test_loader里面拿到一个输入，使用tensorrt对模型进行压缩
     title_tensor = get_one_input_for_tensorrt(rev_vocab, config.title_size)
     decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
-    decoder_init = torch.zeros([1, 1, 1600]).cuda()
+    init_state_input = torch.zeros([1, 1, 1600]).cuda()
     # epsilon = torch.randn([1, config.z_size]).cuda()
 
     # model = torch2trt_dynamic(model, [title_tensor, epsilon, decoder_input, decoder_init], max_workspace_size=1 << 28)  # max_workspace_size 最大不能超过30
-    model = torch2trt_dynamic(model, [title_tensor, decoder_input, decoder_init],
+
+    use_input_state = torch.ones([1, 1, 1600]).cuda()
+    model = torch2trt_dynamic(model, [title_tensor, decoder_input, use_input_state, init_state_input],
                               max_workspace_size=1 << 28)  # max_workspace_size 最大不能超过30
     print("Finish model_trt build")
     last_title = None
@@ -125,19 +125,26 @@ def main():
         time_start = time.time()
 
         decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
-        decoder_init = torch.zeros([1, 1, 1600]).cuda()
+        init_state_input = torch.zeros([1, 1, 1600]).cuda()
         # epsilon = torch.randn([1, config.z_size]).cuda()
         word_list = []
-        for _ in range(10):
+        for i in range(10):
+            # import pdb
+            # pdb.set_trace()
             # topi, decoder_hidden = model(title_tensor, epsilon, decoder_input, decoder_init)
-            topi, decoder_hidden = model(title_tensor, decoder_input, decoder_init)
+            if i == 0:
+                use_input_state = torch.ones([1, 1, 1600]).cuda()
+            else:
+                use_input_state = torch.zeros([1, 1, 1600]).cuda()
+            topi, decoder_hidden = model(title_tensor, decoder_input, use_input_state, init_state_input)
             # import pdb
             # pdb.set_trace()
             word_list.append(vocab[topi.item()])
+            print(topi.item())
             if topi.item() == 3:
                 break
             decoder_input = topi
-            decoder_init = decoder_hidden
+            init_state_input = decoder_hidden
 
 
         print("finish inferencing, using {} seconds".format(time.time()-time_start))

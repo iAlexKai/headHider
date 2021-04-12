@@ -169,13 +169,11 @@ class Decoder(nn.Module):
         # batch_size = decoder_input.shape[0]
 
         decoder_input = self.embedding(decoder_input)  # (batch, 1, emb_dim)
-        decoder_hidden = init_hidden.view(1, 1, 1600)  # (1, batch, 4*hidden+z_size)
-                                                       # 这里，不能写成 (1, 1, -1) view的converter里面-1没有处理好
 
         # pred_outs = torch.ones([10]).cuda()
 
         # for di in range(10):
-        decoder_output, decoder_hidden = self.rnn(decoder_input, decoder_hidden)  # (1, 1, hidden)
+        decoder_output, decoder_hidden = self.rnn(decoder_input, init_hidden)  # (1, 1, hidden)
 
         decoder_output = self.out(decoder_output.contiguous().view(1, self.hidden_size))  # (1, vocab_size)
         topi = decoder_output.max(dim=1, keepdim=True)[1]
