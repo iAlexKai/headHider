@@ -110,31 +110,34 @@ class PoemWAE(nn.Module):
     # c由title和context encode之后的hidden相concat而成
     # def forward(self, title, epsilon):
 
-    def forward(self, title, decoder_input):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
-    # def forward(self, title):
+    # def forward(self, title, epsilon, decoder_input, decoder_init):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
+    def forward(self, title, decoder_input, decoder_init):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
         self.eval()
-        title_last_hidden = self.seq_encoder(title)
-        # return title_last_hidden
-
-        context_last_hidden = self.seq_encoder(title)
-
-        cond = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 2 * hidden_size * 2)
-
-        # z, _, _ = self.prior_net(cond, epsilon)  # e: (batch, z_size)
-        z, _, _ = self.prior_net(cond)  # e: (batch, z_size)
-
-        z = self.prior_generator(z)  # z: (batch, z_size)
-
-        input_to_init_decoder_hidden = torch.cat((z, cond), 1)
-
-        decoder_init = self.init_decoder_hidden(input_to_init_decoder_hidden)
-        # return decoder_init
-
         # import pdb
         # pdb.set_trace()
-        output = self.decoder(decoder_init, decoder_input)
+        if decoder_init[0][0][0] == 0:
+            print('In')  # debug 发现，加速后再次进入函数就只能走if这条路了，不会出if
+            title_last_hidden = self.seq_encoder(title)
+            # return title_last_hidden
 
-        return output
+            context_last_hidden = self.seq_encoder(title)
+
+            cond = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 2 * hidden_size * 2)
+            # import pdb
+            # pdb.set_trace()
+            # z, _, _ = self.prior_net(cond, epsilon)  # e: (batch, z_size)
+            z, _, _ = self.prior_net(cond)  # e: (batch, z_size)
+
+            z = self.prior_generator(z)  # z: (batch, z_size)
+
+            input_to_init_decoder_hidden = torch.cat((z, cond), 1)
+
+            decoder_init = self.init_decoder_hidden(input_to_init_decoder_hidden)
+        print("Out")
+        topi, decoder_hidden = self.decoder(decoder_input, decoder_init)
+        # import pdb
+        # pdb.set_trace()
+        return topi, decoder_hidden
 
 
         # dec_target = target[:, 1:].contiguous().view(-1)

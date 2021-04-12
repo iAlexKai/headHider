@@ -112,16 +112,13 @@ class Variation(nn.Module):
         # pdb.set_trace()
         context = self.fc(context)
 
-        # return context, context, context
-
-
         mu = self.context_to_mu(context)
         logsigma = self.context_to_logsigma(context)
 
-
         std = torch.exp(0.5 * logsigma)
 
-
+        # import pdb
+        # pdb.set_trace()
         epsilon = to_tensor(torch.ones([batch_size, self.z_size]))
         # return mu, mu, logsigma
 
@@ -146,7 +143,7 @@ class Decoder(nn.Module):
 
     # init_hidden: (batch, z_size + 4*hidden) --unsqueeze->  (1, batch, z_size+4*hidden)
     # self.decoder(torch.cat((z, c), 1), None, target[:, :-1], target_lens-1)
-    def forward(self, init_hidden, decoder_input):   # 所有的Tensor必须用到，同时converter转换正确
+    def forward(self, decoder_input, init_hidden):   # 所有的Tensor必须用到，同时converter转换正确
         # batch_size = init_hidden.size(0)
         # decoder_input = to_tensor(torch.LongTensor([[go_id]]).view(1, 1))  # (batch, 1)
         # inputs = self.embedding(inputs)
@@ -182,7 +179,10 @@ class Decoder(nn.Module):
 
         decoder_output = self.out(decoder_output.contiguous().view(1, self.hidden_size))  # (1, vocab_size)
         topi = decoder_output.max(dim=1, keepdim=True)[1]
-        return topi
+        
+        return topi, decoder_hidden  # 用于下一轮的输入
+        
+        
         # import pdb
         # pdb.set_trace()
         pred_outs[di] = topi[0][0]

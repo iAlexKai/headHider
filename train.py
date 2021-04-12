@@ -8,6 +8,8 @@ import torch
 import pickle
 import os, sys
 import time
+import pdb
+pdb.set_trace()
 from torch2trt_dynamic import torch2trt_dynamic
 
 from configs import Config as Config
@@ -66,6 +68,7 @@ def get_user_input(rev_vocab, title_size, last_file_length):
 
 
 def main():
+
     # config for training
     config = Config()
     vocab_file = open('pickle_file/vocab.pickle', 'rb')
@@ -88,12 +91,13 @@ def main():
 
     # 从test_loader里面拿到一个输入，使用tensorrt对模型进行压缩
     title_tensor = get_one_input_for_tensorrt(rev_vocab, config.title_size)
-
-    # model = torch2trt_dynamic(model, [title_tensor], max_workspace_size=1 << 28)
-
     decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
-    # decoder_input = title_tensor
-    model = torch2trt_dynamic(model, [title_tensor, decoder_input], max_workspace_size=1 << 28, fp16_mode=True)  # max_workspace_size 最大不能超过30
+    decoder_init = torch.zeros([1, 1, 1600]).cuda()
+    # epsilon = torch.randn([1, config.z_size]).cuda()
+
+    # model = torch2trt_dynamic(model, [title_tensor, epsilon, decoder_input, decoder_init], max_workspace_size=1 << 28)  # max_workspace_size 最大不能超过30
+    model = torch2trt_dynamic(model, [title_tensor, decoder_input, decoder_init],
+                              max_workspace_size=1 << 28)  # max_workspace_size 最大不能超过30
     print("Finish model_trt build")
     last_title = None
     last_file_length = 0
@@ -120,71 +124,28 @@ def main():
         import time
         time_start = time.time()
 
-        # epsilon = torch.randn([1, config.z_size]).cuda()
-        # output_poem = model([title_tensor, epsilon])
         decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
-        # decoder_input = title_tensor
-        output_poem = model(title_tensor, decoder_input)
+        decoder_init = torch.zeros([1, 1, 1600]).cuda()
+        # epsilon = torch.randn([1, config.z_size]).cuda()
+        word_list = []
+        for _ in range(10):
+            # topi, decoder_hidden = model(title_tensor, epsilon, decoder_input, decoder_init)
+            topi, decoder_hidden = model(title_tensor, decoder_input, decoder_init)
+            # import pdb
+            # pdb.set_trace()
+            word_list.append(vocab[topi.item()])
+            if topi.item() == 3:
+                break
+            decoder_input = topi
+            decoder_init = decoder_hidden
 
-        # output_poem = model([title_tensor])
 
         print("finish inferencing, using {} seconds".format(time.time()-time_start))
-
-            #with open('./content_from_remote.txt', 'w') as file:
-            #    file.write(output_poem)
-        print(output_poem)
+        print("".join(word_list))
+        # print(topi)
+        # print(decoder_hidden)
         print('\n')
     print("Done testing")
-
-
-def train_process(model, train_loader, config, sentiment_data=False, mask_type=None):
-    model.train()
-    loss_records = []
-    sentiment_mask = None
-    if sentiment_data:
-
-        batch = train_loader.next_sentiment_batch()
-        finish_train = False
-        if batch is None:  # end of epoch
-            finish_train = True
-            return model, finish_train, None
-        title, context, target, target_lens, sentiment_mask = batch
-        title, context, target, target_lens, sentiment_mask = \
-            to_tensor(title), to_tensor(context), to_tensor(target), to_tensor(target_lens), to_tensor(sentiment_mask)
-    else:
-        batch = train_loader.next_batch()
-        finish_train = False
-        if batch is None:  # end of epoch
-            finish_train = True
-            return model, finish_train, None
-        title, context, target, target_lens = batch
-        title, context, target, target_lens = \
-            to_tensor(title), to_tensor(context), to_tensor(target), to_tensor(target_lens)
-
-    # import pdb
-    # pdb.set_trace()
-    loss_AE = model.train_AE(title, context, target, target_lens)  # 输入topic，last句，当前句，当前句长度
-    loss_records.extend(loss_AE)
-
-    loss_G = model.train_G(title, context, target, target_lens, sentiment_mask=sentiment_mask, mask_type=mask_type)
-    loss_records.extend(loss_G)
-
-    # 训练 Discriminator
-    for i in range(config.n_iters_d):  # train discriminator/critic
-        loss_D = model.train_D(title, context, target, target_lens)
-        if i == 0:
-            loss_records.extend(loss_D)
-        if i == config.n_iters_d - 1:
-            break
-        batch = train_loader.sample_one_batch(sentiment=sentiment_data)
-        if batch is None:  # end of epoch
-            break
-        title, context, target, target_lens = batch
-        title, context, target, target_lens = \
-            to_tensor(title), to_tensor(context), to_tensor(target), to_tensor(target_lens)
-
-    return model, finish_train, loss_records
-
 
 
 if __name__ == "__main__":
