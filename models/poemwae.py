@@ -111,7 +111,7 @@ class PoemWAE(nn.Module):
     # def forward(self, title, epsilon):
 
     # def forward(self, title, epsilon, decoder_input, decoder_init):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
-    def forward(self, title, context, decoder_input, use_input_state, init_state_input):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
+    def forward(self, title, context, decoder_input, use_input_state, init_state_input, epsilon):  # TensorRT， 输入的参数必须得到使用才可以，如果不用也会报错
         self.eval()
         # Tensorrt 不支持if选择，不支持for，while等循环，需要一个控制变量来实现相同的control flow
         # import pdb
@@ -123,8 +123,9 @@ class PoemWAE(nn.Module):
 
         cond = torch.cat((title_last_hidden, context_last_hidden), 1)  # (batch, 2 * hidden_size * 2)
 
-        # z, _, _ = self.prior_net(cond, epsilon)  # e: (batch, z_size)
-        z, _, _ = self.prior_net(cond)  # e: (batch, z_size)
+        epsilon = epsilon.view(1, 800)  # ？？？必须得在这儿给输入的随机数做一步操作，才能通过？？什么道理？？
+        z, _, _ = self.prior_net(cond, epsilon)  # e: (batch, z_size)
+        # z, _, _ = self.prior_net(cond)  # e: (batch, z_size)
 
         z = self.prior_generator(z)  # z: (batch, z_size)
 

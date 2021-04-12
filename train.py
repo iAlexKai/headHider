@@ -93,8 +93,8 @@ def main():
     init_state_input = torch.zeros([1, 1, 1600]).cuda()
     use_input_state = torch.ones([1, 1, 1600]).cuda()
 
-    # epsilon = torch.randn([1, config.z_size]).cuda()
-    model = torch2trt_dynamic(model, [title_tensor, context_tensor, decoder_input, use_input_state, init_state_input],
+    epsilon = torch.randn([config.z_size]).cuda()
+    model = torch2trt_dynamic(model, [title_tensor, context_tensor, decoder_input, use_input_state, init_state_input, epsilon],
                               max_workspace_size=1 << 28)  # max_workspace_size 最大不能超过30
     print("Finish model_trt build")
     # exit(0)
@@ -118,7 +118,8 @@ def main():
         context_tensor = to_tensor(title_list)
         decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
         init_state_input = torch.zeros([1, 1, 1600]).cuda()
-        # epsilon = torch.randn([1, config.z_size]).cuda()
+        epsilon = torch.randn([config.z_size]).cuda()
+
         word_list = []
         print("before inferencing")
         import time
@@ -133,7 +134,7 @@ def main():
                     use_input_state = torch.ones([1, 1, 1600]).cuda()
                 else:
                     use_input_state = torch.zeros([1, 1, 1600]).cuda()
-                topi, decoder_hidden = model(title_tensor, context_tensor, decoder_input, use_input_state, init_state_input)
+                topi, decoder_hidden = model(title_tensor, context_tensor, decoder_input, use_input_state, init_state_input, epsilon)
                 # import pdb
                 # pdb.set_trace()
                 word_list.append(vocab[topi.item()])
@@ -151,6 +152,7 @@ def main():
             word_list = []
             decoder_input = to_tensor(torch.IntTensor([[rev_vocab['<s>']]]).view(1, 1))  # (batch, 1)
             init_state_input = torch.zeros([1, 1, 1600]).cuda()
+            epsilon = torch.randn([config.z_size]).cuda()
 
         print("finish inferencing, using {} seconds".format(time.time()-time_start))
         print(cur_poem)

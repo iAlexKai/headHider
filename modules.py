@@ -102,8 +102,8 @@ class Variation(nn.Module):
             m.weight.data.uniform_(-self.init_w, self.init_w)
             m.bias.data.fill_(0)
 
-    # def forward(self, context, epsilon):
-    def forward(self, context):
+    def forward(self, context, epsilon):
+    # def forward(self, context):
 
         batch_size, _ = context.size()  # prior: (batch, 4 * hidden)
         # return context, context, context
@@ -117,13 +117,13 @@ class Variation(nn.Module):
 
         std = torch.exp(0.5 * logsigma)
 
-        epsilon = to_tensor(torch.ones([batch_size, self.z_size]))
+        # epsilon = to_tensor(torch.ones([batch_size, self.z_size]))
         # import pdb
         # pdb.set_trace()
-        rand = np.random.randn(1, self.z_size)
-        print(rand)
-        for i in range(self.z_size):
-            epsilon[0][i] = rand[0][i]
+        # rand = np.random.randn(1, self.z_size)
+        # print(rand)
+        # for i in range(self.z_size):
+        #     epsilon[0][i] = rand[0][i]
         # return mu, mu, logsigma
 
         z = epsilon * std
